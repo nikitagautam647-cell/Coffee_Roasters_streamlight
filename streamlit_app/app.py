@@ -36,35 +36,38 @@ def load_data(path: str) -> pd.DataFrame:
 def main():
     st.set_page_config(page_title='Coffee Roasters Dashboard', layout='wide')
 
-    # Coffee-themed CSS
+    # Coffee-themed CSS (lighter coffee + off-white accents)
     st.markdown("""
     <style>
     .stApp {
-        background: linear-gradient(90deg, #4b2e2b, #6b463f 60%);
-        color: #f3ebe0;
+        background: linear-gradient(90deg, #d9c7b7 0%, #efe9e1 60%);
+        color: #2f1e1b;
     }
     section[data-testid="stSidebar"] {
-        background-color: #3e2723;
-        color: #f3ebe0;
+        background-color: #8b6b5a;
+        color: #efe9e1;
     }
     .card {
-        background-color: rgba(255,255,255,0.03);
+        background-color: rgba(255,255,255,0.9);
         padding: 14px;
         border-radius: 10px;
         margin-bottom: 10px;
-        border: 1px solid rgba(255,255,255,0.06);
+        border: 1px solid rgba(47,30,27,0.06);
+        color: #2f1e1b;
     }
     .kpi {
         font-size: 24px;
         font-weight: 700;
-        color: #fff8f0;
+        color: #2f1e1b;
     }
     label, .stSelectbox, .stMultiSelect, .stSlider, .stTextInput {
-        color: #f3ebe0 !important;
+        color: #efe9e1 !important;
     }
-    a, .stSidebar a { color: #d7a17a !important; }
-    h1.coffee-title { color: #fff8f0; font-weight:800; margin:0; }
-    h3.coffee-sub { color: #d7a17a; margin-top:4px; margin-bottom:12px; }
+    a, .stSidebar a { color: #6b4226 !important; }
+    h1.coffee-title { color: #2f1e1b; font-weight:800; margin:0; }
+    h3.coffee-sub { color: #6b4226; margin-top:4px; margin-bottom:12px; }
+    /* Tabs text color */
+    button[data-baseweb="tab"] { color: #ffffff !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -90,6 +93,23 @@ def main():
     stores = sorted(df['store_location'].unique()) if 'store_location' in df.columns else []
     selected_stores = st.sidebar.multiselect('Store location', options=stores, default=stores)
 
+    # Product category filter
+    product_cats = sorted(df['product_category'].unique()) if 'product_category' in df.columns else []
+    selected_categories = st.sidebar.multiselect('Product Category', options=product_cats, default=product_cats)
+
+    # Transaction time filter (start/end)
+    if 'transaction_time' in df.columns:
+        df['transaction_time_dt'] = pd.to_datetime(df['transaction_time'], format='%H:%M:%S', errors='coerce')
+        if not df['transaction_time_dt'].isna().all():
+            min_t = df['transaction_time_dt'].min().time()
+            max_t = df['transaction_time_dt'].max().time()
+            t_start = st.sidebar.time_input('Start time', value=min_t)
+            t_end = st.sidebar.time_input('End time', value=max_t)
+        else:
+            t_start = t_end = None
+    else:
+        t_start = t_end = None
+
     # Day-of-week selector (only shown if column exists)
     if 'day_of_week' in df.columns:
         days = sorted(df['day_of_week'].unique())
@@ -97,6 +117,10 @@ def main():
         df = df[df['day_of_week'].isin(selected_days)]
     else:
         selected_days = None
+
+    # Apply product category filter
+    if selected_categories:
+        df = df[df['product_category'].isin(selected_categories)]
 
     # Hour range slider
     min_hour = int(df['hour'].min()) if not df['hour'].isna().all() else 0
@@ -111,6 +135,10 @@ def main():
     if selected_stores:
         df = df[df['store_location'].isin(selected_stores)]
 
+    # Apply transaction time filter
+    if t_start and t_end and 'transaction_time_dt' in df.columns:
+        df = df[(df['transaction_time_dt'].dt.time >= t_start) & (df['transaction_time_dt'].dt.time <= t_end)]
+
     # Metric column
     metric_col = 'revenue' if metric == 'Revenue' else 'transaction_qty'
 
@@ -121,15 +149,19 @@ def main():
     top_store = df.groupby('store_location')['revenue'].sum().idxmax() if 'store_location' in df.columns else 'N/A'
     top_product = df.groupby('product_detail')['revenue'].sum().idxmax() if 'product_detail' in df.columns else 'N/A'
 
+    # Precompute low revenue stores/hours for risk & recommendation
+    low_rev = df.groupby('store_location')['revenue'].sum().reset_index().sort_values('revenue') if 'store_location' in df.columns else pd.DataFrame()
+    low_hours = df.groupby('hour')['revenue'].sum().reset_index().sort_values('revenue') if 'hour' in df.columns else pd.DataFrame()
+
     k1, k2, k3, k4 = st.columns(4)
     k1.markdown(f"""<div class='card'>💵<br><div class='kpi'>${total_revenue:,.2f}</div><div style='opacity:0.8'>Total Revenue</div></div>""", unsafe_allow_html=True)
     k2.markdown(f"""<div class='card'>🧾<br><div class='kpi'>{total_qty:,}</div><div style='opacity:0.8'>Total Quantity</div></div>""", unsafe_allow_html=True)
     k3.markdown(f"""<div class='card'>🎟️<br><div class='kpi'>${avg_ticket:,.2f}</div><div style='opacity:0.8'>Avg Ticket</div></div>""", unsafe_allow_html=True)
     k4.markdown(f"""<div class='card'>📍<br><div class='kpi'>{top_store}</div><div style='opacity:0.8'>Top Store by Revenue</div></div>""", unsafe_allow_html=True)
 
-    # Tabs: Performance, Risk, Recommendation, Benefits
-    tab_perf, tab_risk, tab_rec, tab_benefit = st.tabs([
-        'Performance Overview', 'Risk Analysis', 'Recommendation', 'Benefits'
+    # Tabs: Performance, Risk, Profit Sources (Benefits), Use Recommendation, Recommendation (detailed)
+    tab_perf, tab_risk, tab_benefit, tab_use_rec, tab_rec = st.tabs([
+        'Performance Overview', 'Risk Analysis', 'Profit Sources', 'Use Recommendation', 'Recommendation'
     ])
 
     # Performance Overview
@@ -189,42 +221,56 @@ def main():
             - Low revenue hours: indicates off-peak times with potential for promotions.
             """)
 
-    # Recommendation
+    # Use Recommendation (how to apply recommendations)
+    with tab_use_rec:
+        st.subheader('How to Use Recommendations')
+        st.markdown("""
+        - Review recommended store or hour actions and A/B test promotions for one week.
+        - Track incremental revenue vs control group and adjust offers.
+        - Prioritize high-margin products and measure lift in average ticket.
+        - Use scheduling to shift staff to peak hours and test limited-time bundles during low hours.
+        """)
+
+    # Recommendation (detailed, placed last)
     with tab_rec:
-        st.subheader('Recommendations (short)')
-        recommendations = []
-        # Recommendation based on low_rev
-        if 'store_location' in df.columns:
-            low_store = low_rev.iloc[0]['store_location'] if not low_rev.empty else None
-            if low_store:
-                recommendations.append((f'Improve performance at {low_store}',
-                                        'Why: Low revenue vs peers.',
-                                        'Action: Run targeted promotions, review product mix, adjust staffing.',
-                                        'Benefit: Increased footfall and revenue'))
-
-        if not low_hours.empty:
-            h = int(low_hours.iloc[0]['hour'])
-            recommendations.append((f'Boost {h}:00 hour',
-                                    'Why: Off-peak with low sales.',
-                                    'Action: Time-limited deals, bundles, or happy hour pricing.',
-                                    'Benefit: Better utilization of staff and increased incremental sales'))
-
-        if not recommendations:
-            st.info('No specific recommendations for the current filters.')
+        st.subheader('Recommendations (detailed)')
+        if df.empty:
+            st.info('No recommendations for empty dataset.')
         else:
-            for title, why, action, benefit in recommendations:
-                st.markdown(f"""
-                <div class='card'>
-                <b>{title}</b><br>
-                <i>{why}</i><br>
-                <b>What to do:</b> {action}<br>
-                <b>Benefits:</b> {benefit}
-                </div>
-                """, unsafe_allow_html=True)
+            recs = []
+            if not low_rev.empty:
+                low_store_name = low_rev.iloc[0]['store_location']
+                recs.append({
+                    'title': f'Improve {low_store_name}',
+                    'why': 'Store shows lowest revenue among locations for selected filters.',
+                    'what': 'Run targeted promotions, review top-selling products, audit staffing and opening hours, and local marketing.',
+                    'benefit': 'Higher footfall, improved conversion, and increased revenue.'
+                })
+            if not low_hours.empty:
+                hval = int(low_hours.iloc[0]['hour'])
+                recs.append({
+                    'title': f'Campaign for {hval}:00 hour',
+                    'why': 'This hour has low sales indicating unused capacity.',
+                    'what': 'Introduce time-bound discounts, combo offers, or loyalty points to boost visits.',
+                    'benefit': 'Better staff utilization and incremental sales during off-peak.'
+                })
 
-    # Benefits
+            if not recs:
+                st.info('No specific recommendations generated for current filters.')
+            else:
+                for r in recs:
+                    st.markdown(f"""
+                    <div class='card'>
+                    <b>{r['title']}</b><br>
+                    <b>Why:</b> {r['why']}<br>
+                    <b>What to do:</b> {r['what']}<br>
+                    <b>Benefits:</b> {r['benefit']}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    # Profit Sources (previous Benefits)
     with tab_benefit:
-        st.subheader('Where Profit Comes From')
+        st.subheader('Profit Sources')
         if df.empty:
             st.warning('No data to show.')
         else:
