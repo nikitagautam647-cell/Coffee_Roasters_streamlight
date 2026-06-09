@@ -40,8 +40,8 @@ def main():
     st.markdown("""
     <style>
     .stApp {
-        /* lighter coffee-brown gradient */
-        background: linear-gradient(90deg, #e6d4c6 0%, #d7bfa8 60%);
+        /* slightly darker coffee-brown gradient (+2 brown) */
+        background: linear-gradient(90deg, #ddc3b3 0%, #caa889 60%);
         color: #2f1e1b;
     }
     section[data-testid="stSidebar"] {
