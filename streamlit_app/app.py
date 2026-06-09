@@ -114,57 +114,129 @@ def main():
     # Metric column
     metric_col = 'revenue' if metric == 'Revenue' else 'transaction_qty'
 
-    # Layout: top row overall trend + day-of-week
-    col1, col2 = st.columns([2, 1])
+    # KPI Cards (reflect filtered data)
+    total_revenue = float(df['revenue'].sum()) if 'revenue' in df.columns else 0.0
+    total_qty = int(df['transaction_qty'].sum()) if 'transaction_qty' in df.columns else 0
+    avg_ticket = float(df['revenue'].sum() / df['transaction_id'].nunique()) if 'transaction_id' in df.columns and df['transaction_id'].nunique() > 0 else float(df['revenue'].mean() if not df['revenue'].empty else 0)
+    top_store = df.groupby('store_location')['revenue'].sum().idxmax() if 'store_location' in df.columns else 'N/A'
+    top_product = df.groupby('product_detail')['revenue'].sum().idxmax() if 'product_detail' in df.columns else 'N/A'
 
-    # Overall sales trend: aggregate by row index or hour if available
-    with col1:
+    k1, k2, k3, k4 = st.columns(4)
+    k1.markdown(f"""<div class='card'>💵<br><div class='kpi'>${total_revenue:,.2f}</div><div style='opacity:0.8'>Total Revenue</div></div>""", unsafe_allow_html=True)
+    k2.markdown(f"""<div class='card'>🧾<br><div class='kpi'>{total_qty:,}</div><div style='opacity:0.8'>Total Quantity</div></div>""", unsafe_allow_html=True)
+    k3.markdown(f"""<div class='card'>🎟️<br><div class='kpi'>${avg_ticket:,.2f}</div><div style='opacity:0.8'>Avg Ticket</div></div>""", unsafe_allow_html=True)
+    k4.markdown(f"""<div class='card'>📍<br><div class='kpi'>{top_store}</div><div style='opacity:0.8'>Top Store by Revenue</div></div>""", unsafe_allow_html=True)
+
+    # Tabs: Performance, Risk, Recommendation, Benefits
+    tab_perf, tab_risk, tab_rec, tab_benefit = st.tabs([
+        'Performance Overview', 'Risk Analysis', 'Recommendation', 'Benefits'
+    ])
+
+    # Performance Overview
+    with tab_perf:
         st.subheader('Overall Sales Trend')
-        if 'year' in df.columns and 'transaction_time' in df.columns:
-            # create an ordered index to show trend by transaction_id
-            if 'transaction_id' in df.columns:
-                trend = df.groupby('transaction_id')[metric_col].sum().reset_index()
-                fig = px.line(trend, x='transaction_id', y=metric_col, title=f'{metric} by Transaction')
-            else:
-                trend = df[metric_col].cumsum().reset_index()
-                fig = px.line(trend, x=trend.index, y=metric_col, title=f'Cumulative {metric}')
+        if 'year' in df.columns and 'transaction_time' in df.columns and 'transaction_id' in df.columns:
+            trend = df.groupby('transaction_id')[metric_col].sum().reset_index()
+            fig = px.line(trend, x='transaction_id', y=metric_col, title=f'{metric} by Transaction')
         else:
             trend = df.groupby('hour')[metric_col].sum().reset_index().sort_values('hour')
             fig = px.line(trend, x='hour', y=metric_col, title=f'{metric} by Hour')
         st.plotly_chart(fig, use_container_width=True)
 
-    # Day-of-week / Time bucket panel
-    with col2:
-        st.subheader('Day / Time Breakdown')
-        if selected_days is not None:
-            dow = df.groupby('day_of_week')[metric_col].sum().reset_index()
-            fig2 = px.bar(dow, x='day_of_week', y=metric_col, title=f'{metric} by Day of Week')
-            st.plotly_chart(fig2, use_container_width=True)
-        elif 'Time Bucket' in df.columns:
-            tb = df.groupby('Time Bucket')[metric_col].sum().reset_index()
-            fig2 = px.bar(tb, x='Time Bucket', y=metric_col, title=f'{metric} by Time Bucket')
-            st.plotly_chart(fig2, use_container_width=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader('Day / Time Breakdown')
+            if selected_days is not None:
+                dow = df.groupby('day_of_week')[metric_col].sum().reset_index()
+                fig2 = px.bar(dow, x='day_of_week', y=metric_col, title=f'{metric} by Day of Week', color_discrete_sequence=['#6b4a3e'])
+                st.plotly_chart(fig2, use_container_width=True)
+            elif 'Time Bucket' in df.columns:
+                tb = df.groupby('Time Bucket')[metric_col].sum().reset_index()
+                fig2 = px.bar(tb, x='Time Bucket', y=metric_col, title=f'{metric} by Time Bucket', color_discrete_sequence=['#6b4a3e'])
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.info('No day-of-week or time-bucket column available in dataset.')
+
+        with c2:
+            st.subheader('Hourly Demand Heatmap')
+            if 'store_location' in df.columns:
+                pivot = df.pivot_table(values=metric_col, index='hour', columns='store_location', aggfunc='sum', fill_value=0)
+                fig3 = px.imshow(pivot.T, labels=dict(x='Hour', y='Store', color=metric), x=pivot.index, y=pivot.columns, color_continuous_scale='Oranges')
+                st.plotly_chart(fig3, use_container_width=True)
+            else:
+                st.info('Store location column not found; cannot build heatmap.')
+
+    # Risk Analysis
+    with tab_risk:
+        st.subheader('Risk & Weaknesses')
+        if df.empty:
+            st.warning('No data for current filters.')
         else:
-            st.info('No day-of-week or time-bucket column available in dataset.')
+            # Low revenue stores
+            if 'store_location' in df.columns:
+                low_rev = df.groupby('store_location')['revenue'].sum().reset_index().sort_values('revenue').head(5)
+                fig_r1 = px.bar(low_rev, x='store_location', y='revenue', title='Lowest Revenue Stores', color_discrete_sequence=['#b07c6b'])
+                st.plotly_chart(fig_r1, use_container_width=True)
 
-    # Hourly demand heatmap
-    st.subheader('Hourly Demand Heatmap')
-    if 'store_location' in df.columns:
-        pivot = df.pivot_table(values=metric_col, index='hour', columns='store_location', aggfunc='sum', fill_value=0)
-        # Plot using px.imshow
-        fig3 = px.imshow(pivot.T, labels=dict(x='Hour', y='Store', color=metric), x=pivot.index, y=pivot.columns)
-        st.plotly_chart(fig3, use_container_width=True)
-    else:
-        st.info('Store location column not found; cannot build heatmap.')
+            # Low revenue hours
+            low_hours = df.groupby('hour')['revenue'].sum().reset_index().sort_values('revenue').head(5)
+            fig_r2 = px.bar(low_hours, x='hour', y='revenue', title='Lowest Revenue Hours', color_discrete_sequence=['#b07c6b'])
+            st.plotly_chart(fig_r2, use_container_width=True)
 
-    # Location comparison panels
-    st.subheader('Location Comparison')
-    if 'store_location' in df.columns:
-        loc = df.groupby('store_location')[metric_col].sum().reset_index().sort_values(metric_col, ascending=False)
-        fig4 = px.bar(loc, x='store_location', y=metric_col, title=f'{metric} by Store')
-        st.plotly_chart(fig4, use_container_width=True)
-    else:
-        st.info('No store_location column found for comparison.')
+            st.markdown("""
+            **Quick Risk Notes:**
+            - Low revenue stores: may suffer from poor location, product mix, or staffing.
+            - Low revenue hours: indicates off-peak times with potential for promotions.
+            """)
+
+    # Recommendation
+    with tab_rec:
+        st.subheader('Recommendations (short)')
+        recommendations = []
+        # Recommendation based on low_rev
+        if 'store_location' in df.columns:
+            low_store = low_rev.iloc[0]['store_location'] if not low_rev.empty else None
+            if low_store:
+                recommendations.append((f'Improve performance at {low_store}',
+                                        'Why: Low revenue vs peers.',
+                                        'Action: Run targeted promotions, review product mix, adjust staffing.',
+                                        'Benefit: Increased footfall and revenue'))
+
+        if not low_hours.empty:
+            h = int(low_hours.iloc[0]['hour'])
+            recommendations.append((f'Boost {h}:00 hour',
+                                    'Why: Off-peak with low sales.',
+                                    'Action: Time-limited deals, bundles, or happy hour pricing.',
+                                    'Benefit: Better utilization of staff and increased incremental sales'))
+
+        if not recommendations:
+            st.info('No specific recommendations for the current filters.')
+        else:
+            for title, why, action, benefit in recommendations:
+                st.markdown(f"""
+                <div class='card'>
+                <b>{title}</b><br>
+                <i>{why}</i><br>
+                <b>What to do:</b> {action}<br>
+                <b>Benefits:</b> {benefit}
+                </div>
+                """, unsafe_allow_html=True)
+
+    # Benefits
+    with tab_benefit:
+        st.subheader('Where Profit Comes From')
+        if df.empty:
+            st.warning('No data to show.')
+        else:
+            if 'store_location' in df.columns:
+                top_loc = df.groupby('store_location')['revenue'].sum().reset_index().sort_values('revenue', ascending=False).head(5)
+                fig_b1 = px.bar(top_loc, x='store_location', y='revenue', title='Top Stores by Revenue', color_discrete_sequence=['#6b4a3e'])
+                st.plotly_chart(fig_b1, use_container_width=True)
+            if 'product_detail' in df.columns:
+                top_prod = df.groupby('product_detail')['revenue'].sum().reset_index().sort_values('revenue', ascending=False).head(10)
+                fig_b2 = px.bar(top_prod, x='product_detail', y='revenue', title='Top Products by Revenue', color_discrete_sequence=['#6b4a3e'])
+                st.plotly_chart(fig_b2, use_container_width=True)
+            st.markdown(f"""<div class='card'>Top product: <b>{top_product}</b></div>""", unsafe_allow_html=True)
 
 
 if __name__ == '__main__':
